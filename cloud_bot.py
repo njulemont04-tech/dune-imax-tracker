@@ -14,49 +14,71 @@ def send_alert(message):
     requests.post(DISCORD_WEBHOOK_URL, json=data, timeout=10)
 
 def run_check():
-    print("1. Attempting direct connection with Camoufox anti-detect browser...")
-    page_title = "Unknown"
-    body_text = ""
+    print("Launching Camoufox stealth browser...")
+    with Camoufox(headless=True, humanize=True) as browser:
+        page = browser.new_page()
+        page.goto(TARGET_URL, timeout=45000)
+        page.wait_for_timeout(6000)
 
-    try:
-        with Camoufox(headless=True, humanize=True) as browser:
-            page = browser.new_page()
-            page.goto(TARGET_URL, timeout=45000)
-            page.wait_for_timeout(8000)
-            page_title = page.title()
-            body_text = page.inner_text("body")
-            print(f"Camoufox Page Title: '{page_title}'")
-    except Exception as e:
-        print(f"Camoufox error: {e}")
-
-    # If Kinepolis hard-blocks the entire GitHub Azure IP subnet (403), use Jina Reader fallback
-    if "403" in page_title or "Blocked" in page_title or "Just a moment" in page_title or not body_text:
-        print("2. Azure IP was 403 blocked. Trying Jina Reader proxy fallback...")
+        # 1. Accept cookies if banner is present
         try:
-            r = requests.get(f"https://r.jina.ai/{TARGET_URL}", timeout=30)
-            if r.status_code == 200 and "Dune" in r.text:
-                page_title = "Loaded via Jina Proxy (Dune: Part Three)"
-                body_text = r.text
-                print("✅ Jina Proxy successfully loaded the page!")
+            cookie_btn = page.locator("#onetrust-accept-btn-handler")
+            if cookie_btn.is_visible(timeout=3000):
+                cookie_btn.click()
+                page.wait_for_timeout(1500)
+        except Exception:
+            pass
+
+        # 2. If 'Aucun cinéma sélectionné' is showing, automatically select Kinepolis Bruxelles!
+        body_text = page.inner_text("body")
+        if "Aucun cinéma sélectionné" in body_text or "Sélectionnez un ou plusieurs cinémas" in body_text:
+            print("Selecting Kinepolis Bruxelles automatically...")
+            try:
+                # Click the blue 'Sélectionnez un ou plusieurs cinémas' button
+                page.get_by_text("Sélectionnez un ou plusieurs cinémas").first.click(timeout=5000)
+                page.wait_for_timeout(2000)
+                # Click 'Bruxelles' in the cinema list
+                page.get_by_text("Bruxelles", exact=False).first.click(timeout=5000)
+                page.wait_for_timeout(1500)
+                # Confirm selection if there is a confirm/save button in the modal
+                for btn_text in ["Confirmer", "Enregistrer", "Appliquer", "Valider", "OK"]:
+                    btn = page.get_by_role("button", name=btn_text)
+                    if btn.is_visible():
+                        btn.click()
+                        break
+                page.wait_for_timeout(4000)
+            except Exception as e:
+                print(f"Auto-select note: {e}")
+
+        page_title = page.title()
+        body_text = page.inner_text("body")
+
+        # Extract the text right around the 'Showtimes' section so we can verify what it sees
+        showtimes_Idx = body_text.find("Showtimes")
+        if showtimes_Idx == -1:
+            showtimes_Idx = body_text.find("Séances")
+        showtimes_snippet = body_text[showtimes_Idx:showtimes_Idx+300].replace("\n", " ") if showtimes_Idx != -1 else body_text[-300:].replace("\n", " ")
+
+        print(f"Showtimes section reads: {showtimes_snippet}")
+
+        if TEST_MODE:
+            send_alert(f"Cloud Showtimes Section Test!\n**Title:** `{page_title}`\n**Showtimes Box:** `{showtimes_snippet}`")
+            return
+
+        # 3. Check if showtimes have dropped!
+        if "No showtimes available" in body_text or "Veuillez essayer une autre sélection" in body_text:
+            print("✅ Verified: 'No showtimes available' is still present. No tickets yet.")
+        elif "Aucun cinéma sélectionné" in body_text:
+            # Even if cinema modal didn't close, check if any showtime hours or date tabs appeared on the page
+            has_times = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
+            if has_times:
+                send_alert(f"Showtimes detected on Kinepolis!\nGo buy NOW: {TARGET_URL}")
             else:
-                page_title = f"Proxy status {r.status_code}"
-        except Exception as e:
-            print(f"Proxy fallback failed: {e}")
-
-    if TEST_MODE:
-        snippet = body_text[:200].replace("\n", " ") if body_text else "No body text"
-        send_alert(f"Cloud Bypass Test!\n**Result:** `{page_title}`\n**Preview:** `{snippet}...`")
-        return
-
-    if "Détails du film" in page_title or "Loaded via Jina Proxy" in page_title or "Dune: Part Three" in body_text:
-        # Look for time slots appearing (e.g., 19:30, 20:00)
-        has_showtimes = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
-        if has_showtimes:
-            send_alert(f"Showtime slots detected on Kinepolis!\nGo buy NOW: {TARGET_URL}")
+                print("⚠️ Cinema selector stayed on 'Aucun cinéma sélectionné', no showtime hours found.")
         else:
-            print("✅ Checked cleanly. Still no showtimes.")
-    else:
-        print(f"⚠️ Could not bypass 403 on this run (Status: {page_title}).")
+            if "Détails du film" in page_title and "Dune" in body_text:
+                print("🚨 CHANGE DETECTED IN SHOWTIMES SECTION!")
+                send_alert(f"The 'No showtimes available' message is GONE on Kinepolis!\n**Current text:** `{showtimes_snippet}`\nGo buy NOW: {TARGET_URL}")
 
 if __name__ == "__main__":
     run_check()
