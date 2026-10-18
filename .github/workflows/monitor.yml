@@ -1,0 +1,39 @@
+name: Dune 3 Kinepolis Cloud Monitor
+
+on:
+  # Runs every 15 minutes between 08:00 and 22:00 Belgian time (06:00-20:00 UTC)
+  schedule:
+    - cron: '*/15 6-20 * * *'
+  
+  # Allows you to trigger a test run manually with a button click
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Send a test Discord ping? (true or false)'
+        required: true
+        default: 'true'
+
+jobs:
+  check-tickets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright & Chromium
+        run: |
+          pip install playwright requests
+          playwright install --with-deps chromium
+
+      - name: Run Kinepolis Cloud Tracker
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
+        run: python cloud_bot.py
