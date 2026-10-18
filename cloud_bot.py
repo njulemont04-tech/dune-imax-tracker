@@ -17,68 +17,85 @@ def run_check():
     print("Launching Camoufox stealth browser...")
     with Camoufox(headless=True, humanize=True) as browser:
         page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
         page.goto(TARGET_URL, timeout=45000)
         page.wait_for_timeout(6000)
 
         # 1. Accept cookies if banner is present
         try:
             cookie_btn = page.locator("#onetrust-accept-btn-handler")
-            if cookie_btn.is_visible(timeout=3000):
+            if cookie_btn.is_visible(timeout=4000):
                 cookie_btn.click()
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(2000)
         except Exception:
             pass
 
-        # 2. If 'Aucun cinéma sélectionné' is showing, automatically select Kinepolis Bruxelles!
-        body_text = page.inner_text("body")
-        if "Aucun cinéma sélectionné" in body_text or "Sélectionnez un ou plusieurs cinémas" in body_text:
-            print("Selecting Kinepolis Bruxelles automatically...")
-            try:
-                # Click the blue 'Sélectionnez un ou plusieurs cinémas' button
-                page.get_by_text("Sélectionnez un ou plusieurs cinémas").first.click(timeout=5000)
-                page.wait_for_timeout(2000)
-                # Click 'Bruxelles' in the cinema list
-                page.get_by_text("Bruxelles", exact=False).first.click(timeout=5000)
-                page.wait_for_timeout(1500)
-                # Confirm selection if there is a confirm/save button in the modal
-                for btn_text in ["Confirmer", "Enregistrer", "Appliquer", "Valider", "OK"]:
-                    btn = page.get_by_role("button", name=btn_text)
-                    if btn.is_visible():
-                        btn.click()
-                        break
-                page.wait_for_timeout(4000)
-            except Exception as e:
-                print(f"Auto-select note: {e}")
+        # 2. Scroll down to Showtimes and open the cinema selector modal
+        try:
+            select_btn = page.locator("text=Sélectionnez un ou plusieurs cinémas").first
+            if select_btn.is_visible(timeout=5000):
+                select_btn.scroll_into_view_if_needed()
+                select_btn.click()
+                page.wait_for_timeout(3000)
+
+                # Find all visible elements with 'Bruxelles' and click them
+                bruxelles_items = page.locator("text=Bruxelles").all()
+                print(f"Found {len(bruxelles_items)} elements matching 'Bruxelles'")
+                for item in bruxelles_items:
+                    if item.is_visible():
+                        try:
+                            item.click( timeout=2000)
+                            print("Clicked visible 'Bruxelles' option!")
+                            page.wait_for_timeout(1000)
+                        except Exception:
+                            pass
+
+                # Look for any visible button in the modal to confirm/save
+                buttons = page.locator("button").all()
+                visible_btn_texts = []
+                for b in buttons:
+                    if b.is_visible():
+                        txt = b.inner_text().strip()
+                        if txt:
+                            visible_btn_texts.append(txt)
+                        if any(word in txt.lower() for word in ["confirm", "enregistr", "appliqu", "valid", "sauvegard", "choisir", "sélection", "voir"]):
+                            try:
+                                b.click(timeout=2000)
+                                print(f"Clicked confirm button: {txt}")
+                            except Exception:
+                                pass
+                print(f"Visible buttons on screen: {visible_btn_texts}")
+                page.wait_for_timeout(5000)
+        except Exception as e:
+            print(f"Modal interaction error: {e}")
 
         page_title = page.title()
         body_text = page.inner_text("body")
 
-        # Extract the text right around the 'Showtimes' section so we can verify what it sees
         showtimes_Idx = body_text.find("Showtimes")
         if showtimes_Idx == -1:
             showtimes_Idx = body_text.find("Séances")
-        showtimes_snippet = body_text[showtimes_Idx:showtimes_Idx+300].replace("\n", " ") if showtimes_Idx != -1 else body_text[-300:].replace("\n", " ")
+        showtimes_snippet = body_text[showtimes_Idx:showtimes_Idx+350].replace("\n", " ") if showtimes_Idx != -1 else body_text[-350:].replace("\n", " ")
 
         print(f"Showtimes section reads: {showtimes_snippet}")
 
         if TEST_MODE:
-            send_alert(f"Cloud Showtimes Section Test!\n**Title:** `{page_title}`\n**Showtimes Box:** `{showtimes_snippet}`")
+            send_alert(f"Cloud Modal Test!\n**Title:** `{page_title}`\n**Showtimes Box:** `{showtimes_snippet}`")
             return
 
-        # 3. Check if showtimes have dropped!
+        # 3. Check if showtimes have dropped
         if "No showtimes available" in body_text or "Veuillez essayer une autre sélection" in body_text:
-            print("✅ Verified: 'No showtimes available' is still present. No tickets yet.")
-        elif "Aucun cinéma sélectionné" in body_text:
-            # Even if cinema modal didn't close, check if any showtime hours or date tabs appeared on the page
+            print("✅ Verified: 'No showtimes available' is present. No tickets yet.")
+        elif "Aucun cinéma sélectionné" not in body_text and "Détails du film" in page_title:
+            print("🚨 CHANGE DETECTED IN SHOWTIMES SECTION!")
+            send_alert(f"The 'No showtimes available' message is GONE on Kinepolis!\n**Current text:** `{showtimes_snippet}`\nGo buy NOW: {TARGET_URL}")
+        else:
+            # Fallback: check if any time slots (HH:MM) appeared on the page
             has_times = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
             if has_times:
-                send_alert(f"Showtimes detected on Kinepolis!\nGo buy NOW: {TARGET_URL}")
+                send_alert(f"Showtime hours detected on Kinepolis!\nGo buy NOW: {TARGET_URL}")
             else:
-                print("⚠️ Cinema selector stayed on 'Aucun cinéma sélectionné', no showtime hours found.")
-        else:
-            if "Détails du film" in page_title and "Dune" in body_text:
-                print("🚨 CHANGE DETECTED IN SHOWTIMES SECTION!")
-                send_alert(f"The 'No showtimes available' message is GONE on Kinepolis!\n**Current text:** `{showtimes_snippet}`\nGo buy NOW: {TARGET_URL}")
+                print("⚠️ Still on 'Aucun cinéma sélectionné', check logs for button names.")
 
 if __name__ == "__main__":
     run_check()
