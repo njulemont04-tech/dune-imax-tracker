@@ -1,11 +1,9 @@
 import os
-import sys
 import requests
-from playwright.sync_api import sync_playwright
+from camoufox.sync_api import Camoufox
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 TARGET_URL = "https://kinepolis.be/fr/films/dune-part-three/HO00013472/"
-# Set TEST_ALERT via workflow input to test your phone connection from the cloud
 TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"
 
 def send_alert(message):
@@ -16,75 +14,49 @@ def send_alert(message):
     requests.post(DISCORD_WEBHOOK_URL, json=data, timeout=10)
 
 def run_check():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--window-size=1920,1080"
-            ]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            locale="fr-BE"
-        )
-        page = context.new_page()
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    print("1. Attempting direct connection with Camoufox anti-detect browser...")
+    page_title = "Unknown"
+    body_text = ""
 
-        print("Loading Kinepolis Dune: Part Three page from GitHub Cloud...")
-        page.goto(TARGET_URL, timeout=45000)
-        page.wait_for_timeout(8000)
+    try:
+        with Camoufox(headless=True, humanize=True) as browser:
+            page = browser.new_page()
+            page.goto(TARGET_URL, timeout=45000)
+            page.wait_for_timeout(8000)
+            page_title = page.title()
+            body_text = page.inner_text("body")
+            print(f"Camoufox Page Title: '{page_title}'")
+    except Exception as e:
+        print(f"Camoufox error: {e}")
 
-        page_title = page.title()
-        body_text = page.inner_text("body")
-        html_content = page.content()
-
-        print(f"Page Title loaded: '{page_title}'")
-
-        if TEST_MODE:
-            print("✅ Cloud Test Mode enabled! Sending test ping to Discord...")
-            send_alert(f"GitHub Cloud Tracker is LIVE! Page title read as: `{page_title}`\n{TARGET_URL}")
-            browser.close()
-            return
-
-        # Check if Cloudflare blocked the GitHub datacenter IP
-        if "Just a moment" in page_title or "Attention Required" in page_title or "Cloudflare" in page_title:
-            print("⚠️ Cloudflare challenged the GitHub IP on this run. Skipping gracefully.")
-            browser.close()
-            return
-
-        # Confirm we are actually on the Kinepolis movie page
-        if "Détails du film" not in page_title and "Dune" not in body_text:
-            print(f"⚠️ Unexpected page state ('{page_title}'). Skipping.")
-            browser.close()
-            return
-
-        # Accept cookies if banner appears
+    # If Kinepolis hard-blocks the entire GitHub Azure IP subnet (403), use Jina Reader fallback
+    if "403" in page_title or "Blocked" in page_title or "Just a moment" in page_title or not body_text:
+        print("2. Azure IP was 403 blocked. Trying Jina Reader proxy fallback...")
         try:
-            cookie_btn = page.locator("#onetrust-accept-btn-handler")
-            if cookie_btn.is_visible(timeout=2000):
-                cookie_btn.click()
-                page.wait_for_timeout(2000)
-        except Exception:
-            pass
+            r = requests.get(f"https://r.jina.ai/{TARGET_URL}", timeout=30)
+            if r.status_code == 200 and "Dune" in r.text:
+                page_title = "Loaded via Jina Proxy (Dune: Part Three)"
+                body_text = r.text
+                print("✅ Jina Proxy successfully loaded the page!")
+            else:
+                page_title = f"Proxy status {r.status_code}"
+        except Exception as e:
+            print(f"Proxy fallback failed: {e}")
 
-        # If no cinema is selected on a fresh cloud session, check the underlying showtime/session data
-        # On Kinepolis Belgium, when Zero showtimes exist nationwide for a film, no session times (HH:MM) or IMAX badges render in the showtime block
-        body_text = page.inner_text("body")
+    if TEST_MODE:
+        snippet = body_text[:200].replace("\n", " ") if body_text else "No body text"
+        send_alert(f"Cloud Bypass Test!\n**Result:** `{page_title}`\n**Preview:** `{snippet}...`")
+        return
 
-        # Look for session time indicators or disappearance of empty states
-        has_showtime_buttons = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
-        
-        if has_showtime_buttons:
-            print("🚨 SHOWTIMES DETECTED ON PAGE! Sending Discord alert!")
-            send_alert(f"Showtime slots were just detected on the Kinepolis Dune: Part Three page!\nCheck immediately: {TARGET_URL}")
+    if "Détails du film" in page_title or "Loaded via Jina Proxy" in page_title or "Dune: Part Three" in body_text:
+        # Look for time slots appearing (e.g., 19:30, 20:00)
+        has_showtimes = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
+        if has_showtimes:
+            send_alert(f"Showtime slots detected on Kinepolis!\nGo buy NOW: {TARGET_URL}")
         else:
-            print("✅ Page checked cleanly. No showtime slots posted yet.")
-
-        browser.close()
+            print("✅ Checked cleanly. Still no showtimes.")
+    else:
+        print(f"⚠️ Could not bypass 403 on this run (Status: {page_title}).")
 
 if __name__ == "__main__":
     run_check()
