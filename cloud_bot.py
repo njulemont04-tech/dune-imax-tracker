@@ -14,16 +14,18 @@ requests.get = _patched_get
 from camoufox.sync_api import Camoufox
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
-TARGET_URL = "https://www.kinepolis.be/fr/films/dune-part-three/HO00013472/"
+TARGET_URLS = [
+    ("Main Movie Page", "https://www.kinepolis.be/fr/films/dune-part-three/HO00013472/"),
+    ("IMAX 70mm Page", "https://www.kinepolis.be/fr/genres/dune-troisieme-partie/70mm-movies/")
+]
 TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"
 
 def send_alert(message):
     if not DISCORD_WEBHOOK_URL:
         print("Error: DISCORD_WEBHOOK secret is missing!")
         return
-    data = {"content": f"@everyone 🚨 **DUNE 3 CLOUD ALERT** 🚨\n{message}"}
+    data = {"content": f"@everyone 🚨 **DUNE 3 IMAX 70MM ALERT** 🚨\n{message}"}
     try:
-        _orig_get  # keep reference clean
         requests.post(DISCORD_WEBHOOK_URL, json=data, timeout=10)
     except Exception as e:
         print(f"Discord webhook error: {e}")
@@ -42,43 +44,55 @@ def run_check():
             page.evaluate(f"localStorage.setItem('selectedSites', {repr(selected_sites_json)});")
             page.evaluate("localStorage.setItem('languageCode', 'fr-BE');")
 
-            # 2. Navigate to the Dune: Part Three movie page
-            print("Navigating to Dune 3 page with Brussels pre-loaded...")
-            page.goto(TARGET_URL, timeout=45000)
-            page.wait_for_timeout(6000)
+            test_reports = []
 
-            page_title = page.title()
-            body_text = page.inner_text("body")
+            # 2. Check BOTH the Main Page and the IMAX 70mm Page
+            for label, url in TARGET_URLS:
+                print(f"Checking {label}: {url}")
+                page.goto(url, timeout=45000)
+                page.wait_for_timeout(6000)
 
-            showtimes_Idx = body_text.find("Showtimes")
-            if showtimes_Idx == -1:
-                showtimes_Idx = body_text.find("Séances")
-            showtimes_snippet = body_text[showtimes_Idx:showtimes_Idx+300].replace("\n", " ") if showtimes_Idx != -1 else body_text[-300:].replace("\n", " ")
+                page_title = page.title()
+                body_text = page.inner_text("body")
 
-            print(f"Page Title: {page_title}")
-            print(f"Showtimes Snippet: {showtimes_snippet}")
+                # Grab the relevant section of text
+                idx = body_text.find("No showtimes available")
+                if idx == -1:
+                    idx = body_text.find("Showtimes")
+                if idx == -1:
+                    idx = body_text.find("Sorry, there are no films")
+                snippet = body_text[idx:idx+250].replace("\n", " ") if idx != -1 else body_text[:250].replace("\n", " ")
 
-            if TEST_MODE:
-                send_alert(f"Cloud Check Test!\n**Title:** `{page_title}`\n**Snippet:** `{showtimes_snippet}`")
-                return
+                print(f"[{label}] Title: {page_title}")
+                print(f"[{label}] Snippet: {snippet}")
 
-            # Guard against Cloudflare challenge or partial load
-            if "Détails du film" not in page_title and "Dune" not in body_text:
-                print(f"⚠️ Temporary Cloudflare challenge or slow load ('{page_title}'). Will retry on next cycle.")
-                return
+                if TEST_MODE:
+                    test_reports.append(f"**{label}:** `{snippet[:160]}`")
+                    continue
 
-            # 3. Check if tickets have dropped
-            if "No showtimes available" in body_text or "Veuillez essayer une autre sélection" in body_text:
-                print("✅ Verified: 'No showtimes available' detected cleanly for Brussels!")
-            elif "Aucun cinéma sélectionné" in body_text:
-                print("⚠️ Cinema storage didn't take on this load, skipping.")
-            else:
-                has_times = any(t in body_text for t in ["14:", "15:", "16:", "17:", "19:", "20:", "21:", "22:"])
-                if has_times:
-                    send_alert(f"🚨 SHOWTIMES DETECTED ON KINEPOLIS BRUSSELS!\nGo buy tickets NOW: {TARGET_URL}")
-                else:
-                    print("🚨 Page changed! Sending alert...")
-                    send_alert(f"Kinepolis page updated!\n**Snippet:** `{showtimes_snippet}`\nGo check: {TARGET_URL}")
+                # Skip if Cloudflare challenge or error page
+                if "Just a moment" in page_title or "Attention Required" in page_title or "Kinepolis" not in page_title:
+                    print(f"⚠️ Cloudflare challenge or slow load on {label}, skipping.")
+                    continue
+
+                if label == "Main Movie Page":
+                    if "No showtimes available" in body_text or "Veuillez essayer une autre sélection" in body_text:
+                        print(f"✅ [{label}] Verified: Still 'No showtimes available'.")
+                    elif "Aucun cinéma sélectionné" in body_text:
+                        print(f"⚠️ [{label}] Cinema storage didn't take on this load.")
+                    else:
+                        send_alert(f"🚨 **SHOWTIMES DETECTED ON {label.upper()}!**\n👉 **70mm Link:** {TARGET_URLS[1][1]}\n👉 **Main Link:** {url}\nSnippet: `{snippet[:150]}`")
+                
+                elif label == "IMAX 70mm Page":
+                    if "Sorry, there are no films" in body_text or "Il n’y a pas de séances" in body_text or "Il n'y a pas de séances" in body_text:
+                        print(f"✅ [{label}] Verified: Still 'Sorry, there are no films!'.")
+                    elif "Aucun cinéma sélectionné" in body_text:
+                        print(f"⚠️ [{label}] Cinema storage didn't take on this load.")
+                    else:
+                        send_alert(f"🚨 **IMAX 70MM PAGE JUST WENT LIVE!**\n👉 **BOOK 70MM NOW:** {url}\n👉 **Main Link:** {TARGET_URLS[0][1]}\nSnippet: `{snippet[:150]}`")
+
+            if TEST_MODE and test_reports:
+                send_alert("Dual-URL Cloud Test!\n" + "\n".join(test_reports))
 
     except Exception as e:
         print(f"⚠️ Handled transient error cleanly: {e}")
