@@ -40,4 +40,5 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python cloud_bot.py
