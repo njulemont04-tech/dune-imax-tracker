@@ -82,12 +82,11 @@ def run_check():
                         send_alert(f"🚨 **SHOWTIMES DETECTED ON {label.upper()}!**\n👉 **70mm Link:** {TARGET_URLS[1][1]}\n👉 **Main Link:** {url}\nSnippet: `{snippet[:150]}`")
                 
                 elif label == "IMAX 70mm Page":
-                    # BOTH empty messages must still be present (AND no December dates showing) to stay quiet!
+                    # BOTH empty messages must still be present to stay quiet!
                     has_no_films_msg = "Sorry, there are no films" in body_text
                     has_no_showtimes_msg = ("Il n’y a pas de séances" in body_text or "Il n'y a pas de séances" in body_text or "No showtimes available" in body_text)
-                    has_december_tab = any(d in body_text.lower() for d in ["15\ndéc", "16\ndéc", "15 déc", "16 déc", "déc."])
 
-                    if has_no_films_msg and has_no_showtimes_msg and not has_december_tab:
+                    if has_no_films_msg and has_no_showtimes_msg:
                         print(f"✅ [{label}] Verified: Both 'No showtimes' AND 'Sorry, there are no films!' are still present.")
                     elif "Aucun cinéma sélectionné" in body_text:
                         print(f"⚠️ [{label}] Cinema storage didn't take on this load.")
