@@ -1,15 +1,12 @@
 name: Dune 3 Kinepolis Cloud Monitor
 
 on:
-  schedule:
-    - cron: '*/15 6-20 * * *'
-  
   workflow_dispatch:
     inputs:
       test_mode:
         description: 'Send a test Discord ping? (true or false)'
-        required: true
-        default: 'true'
+        required: false
+        default: 'false'
 
 jobs:
   check-tickets:
@@ -24,8 +21,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+
+      - name: Cache Camoufox Browser Binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/camoufox
+          key: ${{ runner.os }}-camoufox-v1
 
       - name: Install Camoufox Stealth Browser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pip install -U camoufox[geoip] requests
           python -m camoufox fetch
