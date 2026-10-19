@@ -55,22 +55,20 @@ def run_check():
                 page_title = page.title()
                 body_text = page.inner_text("body")
 
-                # Grab the relevant section of text
                 idx = body_text.find("No showtimes available")
                 if idx == -1:
                     idx = body_text.find("Showtimes")
                 if idx == -1:
                     idx = body_text.find("Sorry, there are no films")
-                snippet = body_text[idx:idx+250].replace("\n", " ") if idx != -1 else body_text[:250].replace("\n", " ")
+                snippet = body_text[idx:idx+300].replace("\n", " ") if idx != -1 else body_text[:300].replace("\n", " ")
 
                 print(f"[{label}] Title: {page_title}")
                 print(f"[{label}] Snippet: {snippet}")
 
                 if TEST_MODE:
-                    test_reports.append(f"**{label}:** `{snippet[:160]}`")
+                    test_reports.append(f"**{label}:** `{snippet[:180]}`")
                     continue
 
-                # Skip if Cloudflare challenge or error page
                 if "Just a moment" in page_title or "Attention Required" in page_title or "Kinepolis" not in page_title:
                     print(f"⚠️ Cloudflare challenge or slow load on {label}, skipping.")
                     continue
@@ -84,12 +82,17 @@ def run_check():
                         send_alert(f"🚨 **SHOWTIMES DETECTED ON {label.upper()}!**\n👉 **70mm Link:** {TARGET_URLS[1][1]}\n👉 **Main Link:** {url}\nSnippet: `{snippet[:150]}`")
                 
                 elif label == "IMAX 70mm Page":
-                    if "Sorry, there are no films" in body_text or "Il n’y a pas de séances" in body_text or "Il n'y a pas de séances" in body_text:
-                        print(f"✅ [{label}] Verified: Still 'Sorry, there are no films!'.")
+                    # BOTH empty messages must still be present (AND no December dates showing) to stay quiet!
+                    has_no_films_msg = "Sorry, there are no films" in body_text
+                    has_no_showtimes_msg = ("Il n’y a pas de séances" in body_text or "Il n'y a pas de séances" in body_text or "No showtimes available" in body_text)
+                    has_december_tab = any(d in body_text.lower() for d in ["15\ndéc", "16\ndéc", "15 déc", "16 déc", "déc."])
+
+                    if has_no_films_msg and has_no_showtimes_msg and not has_december_tab:
+                        print(f"✅ [{label}] Verified: Both 'No showtimes' AND 'Sorry, there are no films!' are still present.")
                     elif "Aucun cinéma sélectionné" in body_text:
                         print(f"⚠️ [{label}] Cinema storage didn't take on this load.")
                     else:
-                        send_alert(f"🚨 **IMAX 70MM PAGE JUST WENT LIVE!**\n👉 **BOOK 70MM NOW:** {url}\n👉 **Main Link:** {TARGET_URLS[0][1]}\nSnippet: `{snippet[:150]}`")
+                        send_alert(f"🚨 **IMAX 70MM PAGE JUST CHANGED!**\n👉 **BOOK 70MM NOW:** {url}\n👉 **Main Link:** {TARGET_URLS[0][1]}\nSnippet: `{snippet[:180]}`")
 
             if TEST_MODE and test_reports:
                 send_alert("Dual-URL Cloud Test!\n" + "\n".join(test_reports))
